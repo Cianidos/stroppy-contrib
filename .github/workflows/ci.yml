@@ -25,6 +25,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27'
+          cache-dependency-path: ${{ matrix.example }}/go.sum
       - name: Build
         run: go build ./...
       - name: Test
@@ -45,16 +46,21 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27'
+          cache-dependency-path: ${{ matrix.example }}/go.sum
       - name: Check out Stroppy main
         uses: actions/checkout@v4
         with:
           repository: stroppy-io/stroppy
           ref: main
           path: stroppy-main
+      # -mod=mod updates go.mod and go.sum as the build needs. Do not run
+      # `go mod tidy` here: it also resolves the test dependencies of the SDK's
+      # own imports, which reach a third-party module with a mismatched path and
+      # fail for reasons that have nothing to do with this contract.
       - name: Compile the example against main
         working-directory: ${{ matrix.example }}
         run: |
           go mod edit -replace github.com/stroppy-io/stroppy/v6="$GITHUB_WORKSPACE/stroppy-main"
-          go mod tidy
-          go build ./...
-          go test ./...
+          go build -mod=mod ./...
+          go test -mod=mod ./...
+          go run -mod=mod . -d noop --iterations 1
