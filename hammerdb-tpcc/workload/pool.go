@@ -21,7 +21,7 @@ type poolConfig struct {
 
 // loadPool reads HammerDB's pgcpool.xml without changing its routing policies.
 // Credentials remain in driver configuration and are never added to report data.
-func loadPool(path string, drivers *bench.DriverDeclarations) (*poolConfig, map[string]bench.DriverRef, error) {
+func loadPool(path string, drivers *bench.DriverDeclarations, clients int32) (*poolConfig, map[string]bench.DriverRef, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, nil, err
@@ -67,7 +67,7 @@ func loadPool(path string, drivers *bench.DriverDeclarations) (*poolConfig, map[
 		}
 		pool.names = append(pool.names, name)
 		mode := "cache_statement"
-		refs[name] = drivers.Declare(name, bench.DriverConfig{Kind: bench.DriverPostgres, URL: strings.Join(values, " "), Postgres: &bench.PostgresConfig{DefaultQueryExecMode: &mode}})
+		refs[name] = drivers.Declare(name, bench.DriverConfig{Kind: bench.DriverPostgres, URL: strings.Join(values, " "), Postgres: &bench.PostgresConfig{DefaultQueryExecMode: &mode, MaxConns: &clients}})
 	}
 	for kind, route := range pool.routes {
 		connections := strings.Fields(route.Connections)

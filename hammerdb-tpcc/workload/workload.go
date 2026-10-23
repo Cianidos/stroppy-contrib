@@ -98,7 +98,7 @@ func define(d *bench.Def) error {
 	}
 	if poolFile != "" {
 		var err error
-		w.pool, w.connections, err = loadPool(poolFile, &d.Drivers)
+		w.pool, w.connections, err = loadPool(poolFile, &d.Drivers, int32(clients))
 		if err != nil {
 			return fmt.Errorf("connection pool: %w", err)
 		}

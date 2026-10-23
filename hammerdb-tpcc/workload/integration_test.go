@@ -79,13 +79,35 @@ func TestPostgresProfiles(t *testing.T) {
 					t.Fatalf("%s=%d, want %d", table, count, expected)
 				}
 			}
-			var hash string
-			if err := database.QueryRow(t.Context(), "SELECT md5(string_agg(md5((to_jsonb(t)-'c_since')::text),'' ORDER BY c_w_id,c_d_id,c_id)) FROM customer t").Scan(&hash); err != nil {
+			hashes := map[string]string{
+				"warehouse": "5b0469db8c29d55c3099e81f0daabb6c", "district": "9d4efad2c043180dfd2c8ce844181fbf",
+				"item": "a2e923d05907cd187c39f41bc2a33442", "stock": "3e4435310750c5e052862505b6c9410d",
+				"customer": "e8b54c0742844e230aa3802784cffeeb", "history": "7108ed7f77ce0c5c72f48bddd6fe01c6",
+				"orders": "a37e76bd65a01dd3e764dec40597c2f4", "new_order": "13ee8ed10cb8b5621bc08189b4ba2636",
+				"order_line": "6dd4402a32a4e75d9dda979ee272adda",
+			}
+			queries, err := os.ReadFile("../tools/fingerprint.sql")
+			if err != nil {
 				t.Fatal(err)
 			}
-			if hash != "e8b54c0742844e230aa3802784cffeeb" {
-				t.Fatal("customer data differs from HammerDB v6.1 seed=1", hash)
+			rows, err := database.Query(t.Context(), string(queries))
+			if err != nil {
+				t.Fatal(err)
 			}
+			for rows.Next() {
+				var table, hash string
+				var count int64
+				if err := rows.Scan(&table, &count, &hash); err != nil {
+					t.Fatal(err)
+				}
+				if hash != hashes[table] {
+					t.Fatalf("%s differs from HammerDB v6.1 seed=1: %s", table, hash)
+				}
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatal(err)
+			}
+			rows.Close()
 			options.Steps = nil
 			options.Params.CLI = map[string]string{"mode": "test", "iterations": "100", "storedprocs": fmt.Sprint(procedures), "timeprofile": "true"}
 			run, err := bench.RunTest(t.Context(), Test, options)
