@@ -1,13 +1,13 @@
-HammerDB-derived PostgreSQL TPROC-C workload
+HammerDB-derived PostgreSQL and MySQL TPROC-C workload
 
 This workload includes SQL copied from HammerDB v6.1 and Go translations of
-its PostgreSQL client, data-generation, and shared TPROC-C routines.
+its PostgreSQL/MySQL clients, data-generation, and shared TPROC-C routines.
 
 Upstream: https://github.com/TPC-Council/HammerDB
 Release: v6.1
 Commit: 2442b32756a484de4206bb0061d9bb28869beaf0
 Upstream credits: Steve Shaw and the HammerDB contributors.
-Source files: src/postgresql/pgoltp.tcl, src/generic/gentpcc.tcl,
+Source files: src/postgresql/pgoltp.tcl, src/mysql/mysqloltp.tcl, src/generic/gentpcc.tcl,
               modules/tpcccommon-1.0.tm.
 
 This module and its workload sources are distributed under GNU GPL version 3.

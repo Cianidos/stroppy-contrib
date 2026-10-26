@@ -1,4 +1,4 @@
-// Package workload ports HammerDB v6.1's native PostgreSQL TPROC-C workload.
+// Package workload ports HammerDB v6.1's PostgreSQL and MySQL TPROC-C workload.
 // It is GPL-3.0 licensed; see LICENSE and NOTICE.
 package workload
 
@@ -27,23 +27,25 @@ var Test = bench.Test{
 func init() { bench.Register(Test) }
 
 type workload struct {
-	mode                                   string
-	workers, warehouses, loadWorkers       int
-	iterations                             int64
-	seed                                   int64
-	rampup, duration, asyncDelay           time.Duration
-	storedprocs, keyandthink, allwarehouse bool
-	raiseerror, asyncScale, asyncVerbose   bool
-	timeprofile, partition, vacuum, create bool
-	asyncClients                           int
-	pool                                   *poolConfig
-	connections                            map[string]bench.DriverRef
-	attempts, failures                     *bench.CounterHandle
-	latency                                *bench.HistogramHandle
-	nopm, tpm                              *bench.GaugeHandle
-	result                                 measurement
-	itemRandom                             *random
-	nextLoader                             atomic.Int64
+	mysql, prepared, noStoredProcs, historyPK bool
+	storageEngine                             string
+	mode                                      string
+	workers, warehouses, loadWorkers          int
+	iterations                                int64
+	seed                                      int64
+	rampup, duration, asyncDelay              time.Duration
+	storedprocs, keyandthink, allwarehouse    bool
+	raiseerror, asyncScale, asyncVerbose      bool
+	timeprofile, partition, vacuum, create    bool
+	asyncClients                              int
+	pool                                      *poolConfig
+	connections                               map[string]bench.DriverRef
+	attempts, failures                        *bench.CounterHandle
+	latency                                   *bench.HistogramHandle
+	nopm, tpm                                 *bench.GaugeHandle
+	result                                    measurement
+	itemRandom                                *random
+	nextLoader                                atomic.Int64
 }
 
 func define(d *bench.Def) error {
@@ -57,7 +59,11 @@ func define(d *bench.Def) error {
 	w.warehouses, _ = d.Param.Int("warehouses", 1, "Warehouses to create; runtime reads the database maximum.", bench.Min(1), bench.Max(100000))
 	w.loadWorkers, _ = d.Param.Int("load-workers", 1, "Parallel warehouse loaders.", bench.Min(1))
 	w.create, _ = d.Param.Bool("create", false, "Create and populate a new schema before running; existing tables are never dropped.")
-	w.storedprocs, _ = d.Param.Bool("storedprocs", false, "Create/use procedures instead of functions; runtime detects existing routines.")
+	w.storedprocs, _ = d.Param.Bool("storedprocs", false, "PostgreSQL procedures instead of functions; MySQL uses procedures by default.")
+	w.prepared, _ = d.Param.Bool("prepared", false, "MySQL SQL PREPARE/EXECUTE calls.")
+	w.noStoredProcs, _ = d.Param.Bool("no-stored-procs", false, "MySQL client-side SQL transactions instead of procedure calls.")
+	w.historyPK, _ = d.Param.Bool("history-pk", false, "MySQL 8.0.30+ invisible primary key on history.")
+	w.storageEngine, _ = d.Param.String("storage-engine", "innodb", "MySQL table storage engine.")
 	w.keyandthink, _ = d.Param.Bool("keyandthink", false, "Apply HammerDB keying and rounded exponential think times.")
 	w.allwarehouse, _ = d.Param.Bool("allwarehouse", false, "Choose each transaction's warehouse from the worker-assigned list.")
 	w.raiseerror, _ = d.Param.Bool("raiseerror", false, "Stop the affected client on a SQL error instead of continuing; never retry.")
@@ -70,7 +76,7 @@ func define(d *bench.Def) error {
 	w.vacuum, _ = d.Param.Bool("vacuum", false, "Run VACUUM and CHECKPOINT after the timed run; requires database privileges.")
 	queryTimeout, _ := d.Param.Duration("query-timeout", 0, "Per-statement timeout; zero preserves HammerDB's unbounded queries.", bench.Min(time.Duration(0)))
 	d.Drivers.QueryTimeout(queryTimeout)
-	poolFile, _ := d.Param.String("connect-pool", "", "HammerDB pgcpool.xml for per-transaction connection routing (functions only).")
+	poolFile, _ := d.Param.String("connect-pool", "", "HammerDB pgcpool.xml or mysqlcpool.xml for per-transaction connection routing.")
 	if w.mode != "timed" && w.asyncScale {
 		return errors.New("async-scale requires timed mode, as in HammerDB")
 	}
@@ -92,13 +98,31 @@ func define(d *bench.Def) error {
 		mode = "simple_protocol"
 	}
 	capacity := int32(max(clients+1, min(w.loadWorkers, w.warehouses)))
-	driver := d.Drivers.Declare("default", bench.DriverConfig{Kind: bench.DriverPostgres, Postgres: &bench.PostgresConfig{DefaultQueryExecMode: &mode, MaxConns: &capacity}})
-	if kind := driver.Kind(); kind != bench.DriverPostgres && kind != bench.DriverRecording {
-		return fmt.Errorf("hammerdb-tpcc requires PostgreSQL, got %s", kind)
+	driver := d.Drivers.Declare("default", bench.DriverConfig{Kind: bench.DriverPostgres, Postgres: &bench.PostgresConfig{DefaultQueryExecMode: &mode, MaxConns: &capacity}, SQL: &bench.SQLConfig{MaxOpenConns: &capacity}})
+	w.mysql = driver.Kind() == bench.DriverMySQL
+	if kind := driver.Kind(); kind != bench.DriverPostgres && kind != bench.DriverMySQL && kind != bench.DriverRecording {
+		return fmt.Errorf("hammerdb-tpcc requires PostgreSQL or MySQL, got %s", kind)
+	}
+	if w.mysql && w.vacuum {
+		return errors.New("vacuum is PostgreSQL-only")
+	}
+	if !w.mysql && (w.prepared || w.noStoredProcs || w.historyPK) {
+		return errors.New("prepared, no-stored-procs and history-pk require MySQL")
+	}
+	for _, c := range w.storageEngine {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_') {
+			return errors.New("invalid storage-engine identifier")
+		}
+	}
+	if w.storageEngine == "" {
+		return errors.New("storage-engine must not be empty")
 	}
 	if poolFile != "" {
 		var err error
-		w.pool, w.connections, err = loadPool(poolFile, &d.Drivers, int32(clients))
+		w.pool, w.connections, err = loadPool(poolFile, &d.Drivers, int32(clients), w.mysql)
+		if w.mysql {
+			w.prepared = true
+		}
 		if err != nil {
 			return fmt.Errorf("connection pool: %w", err)
 		}
@@ -123,7 +147,13 @@ func define(d *bench.Def) error {
 		}, bench.SharedIterations(loaders, int64(loaders)))
 		d.Execution.Step("create_indexes", w.indexes)
 		d.Execution.Step("create_routines", w.routines)
-		d.Execution.Step("analyze", func(ctx context.Context, b *bench.Bench) error { return b.Exec(ctx, "ANALYZE", nil) })
+		d.Execution.Step("analyze", func(ctx context.Context, b *bench.Bench) error {
+			statement := "ANALYZE"
+			if w.mysql {
+				statement = "analyze table customer, district, history, item, new_order, orders, order_line, stock, warehouse"
+			}
+			return b.Exec(ctx, statement, nil)
+		})
 	}
 	jobs := clients
 	if w.mode == "timed" {
@@ -193,6 +223,9 @@ func execSection(ctx context.Context, b *bench.Bench, sql *bench.SQL, section st
 }
 
 func (w *workload) createSchema(ctx context.Context, b *bench.Bench) error {
+	if w.mysql {
+		return w.createMySQLSchema(ctx, b)
+	}
 	for _, statement := range assetSQL("schema.sql").Section("create_schema") {
 		if w.partition && w.warehouses >= 200 && strings.HasPrefix(statement, "CREATE TABLE ORDER_LINE") {
 			statement += " PARTITION BY HASH (OL_W_ID)"
@@ -214,10 +247,16 @@ func (w *workload) createSchema(ctx context.Context, b *bench.Bench) error {
 }
 
 func (w *workload) indexes(ctx context.Context, b *bench.Bench) error {
+	if w.mysql {
+		return nil
+	}
 	return execSection(ctx, b, assetSQL("schema.sql"), "create_indexes")
 }
 
 func (w *workload) routines(ctx context.Context, b *bench.Bench) error {
+	if w.mysql {
+		return execSection(ctx, b, assetSQL("mysql_procedures.sql"), "routines")
+	}
 	name := "functions.sql"
 	if w.storedprocs {
 		name = "procedures.sql"

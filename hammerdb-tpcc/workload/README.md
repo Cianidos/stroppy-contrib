@@ -1,10 +1,12 @@
-# HammerDB PostgreSQL TPROC-C
+# HammerDB PostgreSQL and MySQL TPROC-C
 
 GPL-3.0 workload derived from HammerDB v6.1. See NOTICE and LICENSE.
 
-The workload uses HammerDB's original PostgreSQL functions or procedures, its
-10:10:1:1:1 transaction mix, database-side New-Order randomness, and its client
+The workload uses HammerDB's original PostgreSQL functions/procedures or MySQL
+procedures, its 10:10:1:1:1 mix, database-side New-Order randomness, and its client
 and loader distributions. It can run directly against a HammerDB-created database.
+MySQL also supports HammerDB's client-side SQL variant with its original client
+random draws. See the project README for reference-comparison tools.
 
 From the project directory:
 
@@ -22,6 +24,14 @@ Use `--create=true --warehouses 1 --mode test --iterations 1` to create and load
 schema in a dedicated empty database. Existing tables are never dropped. Select
 only setup with `--steps create_schema,load_items,load_data,create_indexes,create_routines,analyze`.
 Never run setup against data you need to keep. Runtime-only runs are the default.
+
+MySQL uses `-d mysql -D url='user:password@tcp(host:3306)/tpcc?parseTime=true'`.
+`--prepared=true` selects SQL PREPARE/EXECUTE; `--no-stored-procs=true` selects
+client-side transactions. `--history-pk=true` and `--storage-engine innodb` select
+MySQL schema options. Create the empty database with `latin1_swedish_ci` to match
+HammerDB. Clients retain `autocommit=0` and separate output-variable reads. MySQL
+TPM uses global `Com_commit + Com_rollback`. XML `mysqlcpool.xml` routing forces
+prepared procedure calls; driver overrides configure credentials/socket/TLS.
 
 Parameters mirror native PostgreSQL HammerDB options: `--storedprocs`,
 `--keyandthink`, `--allwarehouse`, `--raiseerror`, `--timeprofile`, `--partition`,

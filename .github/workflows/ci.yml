@@ -101,4 +101,31 @@ jobs:
       - name: Run PostgreSQL profiles
         env:
           HAMMERDB_PG_URL: host=localhost port=5432 user=postgres password=hammerdb dbname=postgres sslmode=disable
-        run: go test -race -tags=integration ./workload
+        run: go test -race -tags=integration ./workload -run 'TestPostgresProfiles|TestDifferentialClient'
+
+  hammerdb-mysql:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: hammerdb
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -phammerdb"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+    defaults:
+      run:
+        working-directory: hammerdb-tpcc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache-dependency-path: hammerdb-tpcc/go.sum
+      - name: Run MySQL profiles
+        env:
+          HAMMERDB_MYSQL_URL: root:hammerdb@tcp(localhost:3306)/mysql?parseTime=true
+        run: go test -race -tags=integration ./workload -run 'TestMySQL'

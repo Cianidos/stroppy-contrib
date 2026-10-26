@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/stroppy-io/stroppy/v6/pkg/bench"
@@ -26,16 +27,18 @@ var functionSQL = [...]string{
 const detectSQL = `SELECT p.prokind, count(*) AS cnt FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname IN ('neword','payment','delivery','ostat','slev') GROUP BY p.prokind`
 
 type terminal struct {
-	random     *random
-	stream     *threadRandom
-	client     int
-	home       int
-	district   int
-	warehouses int
-	procedures bool
-	counts     [5]uint64
-	sessions   map[string]*bench.Tx
-	owner      int
+	random          *random
+	stream          *threadRandom
+	client          int
+	home            int
+	district        int
+	warehouses      int
+	procedures      bool
+	counts          [5]uint64
+	sessions        map[string]*bench.Tx
+	owner           int
+	mysql, prepared bool
+	preparedSQL     map[*bench.Tx][]string
 }
 
 func pickTransaction(choice int) int {
@@ -122,7 +125,11 @@ func (w *workload) connect(ctx context.Context, b *bench.Bench, name string) (*b
 	if err != nil {
 		return nil, err
 	}
-	if err = session.Exec(ctx, "set CLIENT_MIN_MESSAGES TO 'ERROR'", nil); err != nil {
+	setting := "set CLIENT_MIN_MESSAGES TO 'ERROR'"
+	if w.mysql {
+		setting = "set autocommit=0"
+	}
+	if err = session.Exec(ctx, setting, nil); err != nil {
 		return nil, errors.Join(err, session.Rollback(context.WithoutCancel(ctx)))
 	}
 	return session, nil
@@ -156,6 +163,7 @@ func detectMode(ctx context.Context, b *bench.Bench, session *bench.Tx, requeste
 }
 
 func (w *workload) initialize(ctx context.Context, b *bench.Bench, t *terminal) error {
+	t.mysql, t.prepared = w.mysql, w.prepared
 	t.sessions = make(map[string]*bench.Tx)
 	names := []string{"default"}
 	if w.pool != nil {
@@ -169,9 +177,23 @@ func (w *workload) initialize(ctx context.Context, b *bench.Bench, t *terminal) 
 		t.sessions[name] = session
 	}
 	first := t.sessions[names[0]]
-	t.procedures = detectMode(ctx, b, first, w.storedprocs)
-	if w.pool != nil {
-		t.procedures = false
+	if w.mysql {
+		if w.prepared {
+			t.preparedSQL = make(map[*bench.Tx][]string)
+			for _, session := range t.sessions {
+				for _, statement := range assetSQL("mysql_prepare.sql").Section("prepare") {
+					if err := session.Exec(ctx, statement, nil); err != nil {
+						return err
+					}
+					t.preparedSQL[session] = append(t.preparedSQL[session], strings.Fields(statement)[1])
+				}
+			}
+		}
+	} else {
+		t.procedures = detectMode(ctx, b, first, w.storedprocs)
+		if w.pool != nil {
+			t.procedures = false
+		}
 	}
 	metadata := first
 	if w.pool != nil {
@@ -209,6 +231,12 @@ func (w *workload) initialize(ctx context.Context, b *bench.Bench, t *terminal) 
 func (t *terminal) close(ctx context.Context) error {
 	var err error
 	for _, session := range t.sessions {
+		if t.mysql {
+			for _, name := range t.preparedSQL[session] {
+				err = errors.Join(err, session.Exec(ctx, "deallocate prepare "+name, nil))
+			}
+			err = errors.Join(err, session.Exec(ctx, "ROLLBACK", nil), session.Exec(ctx, "set autocommit=1", nil))
+		}
 		err = errors.Join(err, session.Commit(ctx))
 	}
 	return err
@@ -267,10 +295,24 @@ func (w *workload) runClient(ctx context.Context, b *bench.Bench, t *terminal, s
 		if w.pool != nil {
 			session = t.sessions[w.pool.pick(kind, t.counts[kind], t.random)]
 		}
-		statement := t.statement(kind, time.Now())
+		var statement call
+		var mysqlCall mysqlCall
+		if w.mysql {
+			mysqlCall = t.mysqlStatement(kind, time.Now())
+		} else {
+			statement = t.statement(kind, time.Now())
+		}
 		t.stream.Unlock()
 		started := time.Now()
-		err := b.LogicalOperation(func() error { return session.Exec(ctx, statement.text, statement.args) })
+		err := b.LogicalOperation(func() error {
+			if w.mysql {
+				if w.noStoredProcs && w.pool == nil {
+					return w.mysqlTransaction(ctx, session, t, kind, mysqlCall)
+				}
+				return mysqlCall.run(ctx, session)
+			}
+			return session.Exec(ctx, statement.text, statement.args)
+		})
 		t.counts[kind]++
 		w.attempts.Add(ctx, 1, bench.LabelValue("transaction", name))
 		if w.timeprofile {
@@ -281,7 +323,7 @@ func (w *workload) runClient(ctx context.Context, b *bench.Bench, t *terminal, s
 			if ctx.Err() != nil {
 				return err
 			}
-			if w.raiseerror {
+			if w.raiseerror || w.mysql && w.noStoredProcs && w.pool == nil {
 				return err
 			}
 			b.RecordError(name, err)

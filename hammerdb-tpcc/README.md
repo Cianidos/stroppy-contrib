@@ -1,4 +1,4 @@
-# HammerDB-derived PostgreSQL TPROC-C
+# HammerDB-derived PostgreSQL and MySQL TPROC-C
 
 Standalone Stroppy SDK workload. See [workload/README.md](workload/README.md)
 for modes, flags, semantics, and known upstream quirks. This entire module is
@@ -26,6 +26,40 @@ runs 100 transactions **per client**. `--async-scale=true --async-client 10`
 creates ten concurrent clients per active worker. `--keyandthink=true` enables
 HammerDB's pacing. Other parameters and process-environment names appear in
 `go run . --help`.
+
+## MySQL
+
+```sh
+go run . -d mysql -D url='tpcc:tpcc@tcp(localhost:3306)/tpcc?parseTime=true' \
+  --mode timed --vus 8 --rampup 2m --duration 5m
+```
+
+MySQL uses HammerDB's original procedures by default; `--storedprocs` only
+selects PostgreSQL's routine style. `--prepared=true` uses HammerDB's SQL
+`PREPARE`/`EXECUTE ... USING` sequence. `--no-stored-procs=true` selects its
+client-side SQL variant, including client-side item/quantity draws in that mode.
+The default procedure variants retain all item/quantity/rollback randomness in
+MySQL `RAND()`. Connection routing uses `--connect-pool mysqlcpool.xml` and forces
+prepared procedure calls, as HammerDB does. Pool routing takes precedence over
+`--no-stored-procs`.
+
+MySQL clients use persistent sessions with `autocommit=0`; the timed monitor uses
+`autocommit=1`. Output-variable SELECTs remain separate round trips, even in timed
+mode. No SDK transaction wraps the procedure and no retry is added. Session
+cleanup rolls back unfinished work before returning the connection to the pool.
+
+Create a dedicated empty database with `CHARACTER SET latin1 COLLATE
+latin1_swedish_ci` to match HammerDB's schema provisioning. Pass `--create=true`
+with the same setup steps shown above. The loader shares HammerDB's matching
+value generation but rounds `order_line.ol_amount` to MySQL's upstream integer
+column. `--storage-engine innodb`, `--history-pk=true`, and `--partition=true`
+mirror MySQL setup options; invisible history keys require MySQL 8.0.30+.
+Credentials, Unix sockets, and TLS use Stroppy driver options/DSNs. XML TLS option
+lists are rejected rather than silently ignored; use named driver overrides.
+
+MySQL TPM uses global `Com_commit + Com_rollback`, not PostgreSQL counters or
+Stroppy logical successes. Default procedure mode and client-side mode can produce
+different SQL semantics because those differences already exist in HammerDB.
 
 ## Side-by-side comparisons
 
@@ -65,7 +99,16 @@ permission, create uniquely named disposable databases, and remove only those:
 
 ```sh
 HAMMERDB_PG_URL='host=localhost port=5432 user=postgres password=postgres dbname=postgres sslmode=disable' \
-  go test -race -tags=integration ./workload
+  go test -race -tags=integration ./workload -run '^TestPostgresProfiles$'
+```
+
+MySQL's tagged suite creates/removes a disposable database and checks all nine
+loader fingerprints, text/prepared/client transaction profiles, timed async mode,
+and connection routing:
+
+```sh
+HAMMERDB_MYSQL_URL='root:mysql@tcp(localhost:3306)/mysql?parseTime=true' \
+  go test -race -tags=integration ./workload -run '^TestMySQLProfiles$'
 ```
 
 `tools/reference.tcl` invokes the actual pinned HammerDB loader without its GUI;
@@ -100,6 +143,28 @@ signature than HammerDB's bundled binding; append `legacy-pgtcl` to the Tcl
 command for that binding. The adapter removes only the two empty format lists.
 It does not alter SQL or transaction inputs.
 
+MySQL reference tools require Tcl, Thread, and mysqltcl. The loader comparison
+uses `tools/mysql_reference.tcl`; `tools/mysql_fingerprint.py` runs the mysql CLI
+and hashes all non-timestamp columns. Text, prepared, and client-side 100-transaction
+comparisons all matched nine-table fingerprints on MySQL 8.0. Client and server
+seeds are controlled only inside these test oracles, never production runs.
+
+```sh
+tclsh tools/mysql_reference.tcl ../HammerDB localhost 3306 root mysql reference_empty
+python3 -I tools/mysql_fingerprint.py reference_empty mysql -uroot -hlocalhost
+python3 -I tools/mysql_fingerprint.py stroppy_empty mysql -uroot -hlocalhost
+
+# Restore two copies first; supply MYSQL_PWD to mysql CLI if needed.
+tclsh tools/mysql_drive.tcl ../HammerDB localhost 3306 root mysql reference_copy prepared 100
+HAMMERDB_MYSQL_DIFFERENTIAL_URL='root:mysql@tcp(localhost:3306)/stroppy_copy?parseTime=true' \
+HAMMERDB_MYSQL_DIFFERENTIAL_PROFILE=prepared \
+  go test -tags=integration ./workload -run '^TestMySQLDifferentialClient$'
+```
+
+Use `text` or `client` in both commands for those profiles. The MySQL oracle sets
+`rand_seed1=123,rand_seed2=456` and fixes input timestamps. Restore snapshots before
+each comparison; never reuse an already modified copy.
+
 SQL extraction is reproducible and does not execute downloaded Tcl:
 
 ```sh
@@ -109,10 +174,12 @@ git diff -- workload/schema.sql workload/functions.sql workload/procedures.sql
 
 ## Scope
 
-Native PostgreSQL only: functions/procedures, finite/timed runs, fixed/all-warehouse
+Native PostgreSQL and MySQL: PostgreSQL functions/procedures, MySQL text/prepared
+procedures and client-side transactions, finite/timed runs, fixed/all-warehouse
 terminals, pacing, async clients, HammerDB XML connection-routing policies,
-partitioned order-line setup, and optional post-run vacuum/checkpoint. The loader
-uses SDK COPY batches with HammerDB values and ordering; it does not reproduce
+partitioned order-line setup, and PostgreSQL post-run vacuum/checkpoint. The loader
+uses SDK COPY (PostgreSQL) or bulk INSERT (MySQL) with HammerDB values and ordering;
+it does not reproduce
 HammerDB's exact load-time commit/transfer chunking or implicit timestamp timing.
 Load performance is not part of the runtime parity claim. Multi-loader warehouse
 ranges match HammerDB; independent worker seeds are explicit in the Go workload.

@@ -2,6 +2,7 @@ package workload
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"github.com/stroppy-io/stroppy/v6/pkg/bench"
@@ -135,7 +136,11 @@ func insertRows[T any](ctx context.Context, b *bench.Bench, table string, rows [
 		return nil
 	}
 	source := gen.FromRows(int64(len(rows)), func(index uint64) (T, error) { return rows[index], nil }, gen.BatchRows(1000), gen.MaxBytes(500))
-	_, err := b.Insert(ctx, table, source, bench.LoadWorkers(1), bench.InsertMethod(bench.InsertNative))
+	method := bench.InsertNative
+	if b.DriverTypeName() == bench.DriverMySQL {
+		method = bench.InsertPlainBulk
+	}
+	_, err := b.Insert(ctx, table, source, bench.LoadWorkers(1), bench.InsertMethod(method))
 	return err
 }
 
@@ -299,6 +304,11 @@ func (w *workload) load(ctx context.Context, b *bench.Bench) error {
 			customers := customerOrder(r, customersPerDistrict)
 			for start := 1; start <= customersPerDistrict; start += 100 {
 				orders, pending, lines := orderRows(r, warehouse, district, start, 100, customers, time.Now().Truncate(time.Second))
+				if w.mysql {
+					for i := range lines {
+						lines[i].Amount = math.Round(lines[i].Amount)
+					}
+				}
 				if err := insertRows(ctx, b, "orders", orders); err != nil {
 					return err
 				}

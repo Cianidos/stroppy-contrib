@@ -17,10 +17,10 @@ Both run against a real database, against
 [pg-noop](https://github.com/stroppy-io/pg-noop) on loopback, or against the
 recording driver in their own tests — no server needed for `go test ./...`.
 
-[`hammerdb-tpcc`](./hammerdb-tpcc) ports HammerDB v6.1's PostgreSQL TPROC-C
+[`hammerdb-tpcc`](./hammerdb-tpcc) ports HammerDB v6.1's PostgreSQL and MySQL TPROC-C
 workload to the Stroppy SDK, retaining its SQL, generation, transaction mix,
 and database-derived NOPM/TPM. It has a separate GPL-3.0 license. Its unit tests
-use recording; its tagged integration suite uses PostgreSQL.
+use recording; its tagged integration suites use PostgreSQL and MySQL.
 
 ## Try one
 
@@ -69,6 +69,8 @@ go test ./...
   depend on, without waiting for a release.
 - **hammerdb-postgres** — loads a full warehouse and tests function, procedure,
   timed, and asynchronous profiles against PostgreSQL 17.
+- **hammerdb-mysql** — checks full-loader parity and text, prepared, client-side,
+  timed/asynchronous, and routed profiles against MySQL 8.0.
 
 The second job is deliberately separate: it is expected to fail when upstream
 breaks the contract, and that failure is the signal, not an accident.

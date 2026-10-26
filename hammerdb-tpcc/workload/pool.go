@@ -3,8 +3,11 @@ package workload
 import (
 	"encoding/xml"
 	"fmt"
+	"net"
 	"os"
 	"strings"
+
+	gomysql "github.com/go-sql-driver/mysql"
 
 	"github.com/stroppy-io/stroppy/v6/pkg/bench"
 )
@@ -19,9 +22,8 @@ type poolConfig struct {
 	routes [5]poolRoute
 }
 
-// loadPool reads HammerDB's pgcpool.xml without changing its routing policies.
 // Credentials remain in driver configuration and are never added to report data.
-func loadPool(path string, drivers *bench.DriverDeclarations, clients int32) (*poolConfig, map[string]bench.DriverRef, error) {
+func loadPool(path string, drivers *bench.DriverDeclarations, clients int32, mysql bool) (*poolConfig, map[string]bench.DriverRef, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, nil, err
@@ -30,13 +32,20 @@ func loadPool(path string, drivers *bench.DriverDeclarations, clients int32) (*p
 		XMLName     xml.Name `xml:"connpool"`
 		Connections struct {
 			Entries []struct {
-				XMLName  xml.Name
-				Host     string `xml:"pg_host"`
-				Port     string `xml:"pg_port"`
-				SSLMode  string `xml:"pg_sslmode"`
-				User     string `xml:"pg_user"`
-				Password string `xml:"pg_pass"`
-				Database string `xml:"pg_dbase"`
+				XMLName       xml.Name
+				Host          string `xml:"pg_host"`
+				Port          string `xml:"pg_port"`
+				SSLMode       string `xml:"pg_sslmode"`
+				User          string `xml:"pg_user"`
+				Password      string `xml:"pg_pass"`
+				Database      string `xml:"pg_dbase"`
+				MySQLHost     string `xml:"mysql_host"`
+				MySQLPort     string `xml:"mysql_port"`
+				MySQLSocket   string `xml:"mysql_socket"`
+				MySQLSSL      string `xml:"mysql_ssl_options"`
+				MySQLUser     string `xml:"mysql_user"`
+				MySQLPassword string `xml:"mysql_pass"`
+				MySQLDatabase string `xml:"mysql_dbase"`
 			} `xml:",any"`
 		} `xml:"connections"`
 		Routes struct {
@@ -59,6 +68,20 @@ func loadPool(path string, drivers *bench.DriverDeclarations, clients int32) (*p
 		}
 		if _, exists := refs[name]; exists {
 			return nil, nil, fmt.Errorf("duplicate pool connection %q", name)
+		}
+		if mysql {
+			cfg := gomysql.NewConfig()
+			cfg.User, cfg.Passwd, cfg.DBName = connection.MySQLUser, connection.MySQLPassword, connection.MySQLDatabase
+			cfg.Net, cfg.Addr = "tcp", net.JoinHostPort(connection.MySQLHost, connection.MySQLPort)
+			if (connection.MySQLHost == "localhost" || connection.MySQLHost == "127.0.0.1") && connection.MySQLSocket != "" && !strings.EqualFold(connection.MySQLSocket, "null") {
+				cfg.Net, cfg.Addr = "unix", connection.MySQLSocket
+			}
+			if ssl := strings.TrimSpace(connection.MySQLSSL); ssl != "" && ssl != "-ssl false" {
+				return nil, nil, fmt.Errorf("pool %s: configure MySQL TLS with -D%s driver options instead of XML ssl_options", name, name)
+			}
+			refs[name] = drivers.Declare(name, bench.DriverConfig{Kind: bench.DriverMySQL, URL: cfg.FormatDSN(), SQL: &bench.SQLConfig{MaxOpenConns: &clients}})
+			pool.names = append(pool.names, name)
+			continue
 		}
 		var values []string
 		for _, pair := range [][2]string{{"host", connection.Host}, {"port", connection.Port}, {"sslmode", connection.SSLMode}, {"user", connection.User}, {"password", connection.Password}, {"dbname", connection.Database}} {
