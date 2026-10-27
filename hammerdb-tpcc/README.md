@@ -91,6 +91,23 @@ in production. Client scheduling, binary/text result transport, SDK telemetry,
 and Go/Tcl runtime overhead differ. Those are performance comparison subjects,
 not claims of identical wire traffic or scheduling.
 
+A [short local MySQL comparison](comparisons/local-mysql-20261027.md) completed
+with zero reported SQL errors, but throughput varied enough to reverse the winner.
+Its full case results are included; it does not establish a speed ranking.
+
+The upstream timed MySQL driver can run without its GUI using the launcher:
+
+```sh
+MYSQL_PWD='<password>' tclsh tools/mysql_timed.tcl ../HammerDB \
+  localhost 3306 user restored_copy text 2 0.1 0.2
+```
+
+The last values are active clients, warm-up minutes, and measurement minutes.
+Use `prepared` for SQL-prepared calls. Timings must be multiples of 0.1 minutes
+because the original driver polls every six seconds. This launcher uses the
+upstream timed transaction bodies, unlike the fixed-iteration state oracle.
+Its runtime dependencies are Tcl, Thread, and mysqltcl.
+
 ## Verification
 
 Unit/recording tests require no database. The Tcl generator oracle runs when
