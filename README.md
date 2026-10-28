@@ -22,6 +22,11 @@ workload to the Stroppy SDK, retaining its SQL, generation, transaction mix,
 and database-derived NOPM/TPM. It has a separate GPL-3.0 license. Its unit tests
 use recording; its tagged integration suites use PostgreSQL and MySQL.
 
+[`go-tpc-tpcc`](./go-tpc-tpcc) ports the pinned pingcap/go-tpc TPC-C workload
+onto the Stroppy SDK for MySQL and PostgreSQL, preserving its transaction SQL,
+random generation, batching, and schema for direct comparison. It includes
+recording tests and tagged real-database parity tests.
+
 ## Try one
 
 ```bash
@@ -71,6 +76,8 @@ go test ./...
   timed, and asynchronous profiles against PostgreSQL 17.
 - **hammerdb-mysql** — checks full-loader parity and text, prepared, client-side,
   timed/asynchronous, and routed profiles against MySQL 8.0.
+- **go-tpc-databases** — loads two warehouses and checks upstream data/transaction
+  fingerprints on MySQL 8.0 and PostgreSQL 16.
 
 The second job is deliberately separate: it is expected to fail when upstream
 breaks the contract, and that failure is the signal, not an accident.

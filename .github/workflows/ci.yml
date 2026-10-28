@@ -5,7 +5,6 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    # Upstream drift shows up here before it shows up in a release.
     - cron: '0 6 * * *'
   workflow_dispatch:
 
@@ -16,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        example: [select1, selectfile, hammerdb-tpcc]
+        example: [select1, selectfile, hammerdb-tpcc, go-tpc-tpcc]
     defaults:
       run:
         working-directory: ${{ matrix.example }}
@@ -34,10 +33,10 @@ jobs:
       - name: Test
         run: go test -race ./...
       - name: Run against noop
-        if: matrix.example != 'hammerdb-tpcc'
+        if: matrix.example == 'select1' || matrix.example == 'selectfile'
         run: go run . -d noop --iterations 2
-      - name: Inspect HammerDB workload parameters
-        if: matrix.example == 'hammerdb-tpcc'
+      - name: Inspect benchmark workload parameters
+        if: matrix.example == 'hammerdb-tpcc' || matrix.example == 'go-tpc-tpcc'
         run: go run . --help
 
   contract:
@@ -47,7 +46,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        example: [select1, selectfile, hammerdb-tpcc]
+        example: [select1, selectfile, hammerdb-tpcc, go-tpc-tpcc]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -60,21 +59,18 @@ jobs:
           repository: stroppy-io/stroppy
           ref: main
           path: stroppy-main
-      # -mod=mod updates go.mod and go.sum as the build needs. Do not run
-      # `go mod tidy` here: it also resolves the test dependencies of the SDK's
-      # own imports, which reach a third-party module with a mismatched path and
-      # fail for reasons that have nothing to do with this contract.
       - name: Compile the example against main
         working-directory: ${{ matrix.example }}
+        env:
+          EXAMPLE: ${{ matrix.example }}
         run: |
           go mod edit -replace github.com/stroppy-io/stroppy/v6="$GITHUB_WORKSPACE/stroppy-main"
           go build -mod=mod ./...
           go test -mod=mod ./...
-          if [ "${{ matrix.example }}" = hammerdb-tpcc ]; then
-            go run -mod=mod . --help
-          else
-            go run -mod=mod . -d noop --iterations 1
-          fi
+          case "$EXAMPLE" in
+            hammerdb-tpcc|go-tpc-tpcc) go run -mod=mod . --help ;;
+            *) go run -mod=mod . -d noop --iterations 1 ;;
+          esac
 
   hammerdb-postgres:
     runs-on: ubuntu-latest
@@ -129,3 +125,50 @@ jobs:
         env:
           HAMMERDB_MYSQL_URL: root:hammerdb@tcp(localhost:3306)/mysql?parseTime=true
         run: go test -race -tags=integration ./workload -run 'TestMySQL'
+
+  go-tpc-databases:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        driver: [mysql, postgres]
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: gotpc
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -pgotpc"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: gotpc
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: go-tpc-tpcc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache-dependency-path: go-tpc-tpcc/go.sum
+      - name: Check pinned loader and transaction fingerprints
+        env:
+          GO_TPC_TEST_DRIVER: ${{ matrix.driver }}
+        run: |
+          if [ "$GO_TPC_TEST_DRIVER" = mysql ]; then
+            export GO_TPC_TEST_DSN='root:gotpc@tcp(localhost:3306)/mysql'
+          else
+            export GO_TPC_TEST_DSN='postgres://postgres:gotpc@localhost:5432/postgres?sslmode=disable'
+          fi
+          go test -race -tags=integration ./workload -run '^TestDatabaseProfiles$'
