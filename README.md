@@ -29,7 +29,7 @@ recording tests and tagged real-database parity tests.
 
 ## Download the complete collection
 
-The [rolling latest release](https://github.com/stroppy-io/stroppy-contrib/releases/tag/latest)
+The [rolling latest release](https://github.com/Cianidos/stroppy-contrib/releases/tag/latest)
 provides a normal `stroppy` executable containing the official built-ins and every
 workload project merged into this repository. No Go compiler, source checkout,
 or local workload catalog is needed to run the download.
@@ -62,8 +62,8 @@ travel with the download; a derived workload's license can add obligations to th
 combined binary. Do not assume every future collection is Apache-only.
 
 See [release pipeline details](scripts/README.md) for validation and local builds.
-The first download appears only after the release workflow is merged and runs
-successfully on upstream main.
+This fork publishes its own collection after a successful main-branch release
+workflow. Its release assets are independent of upstream Stroppy contrib.
 
 ## Try one
 

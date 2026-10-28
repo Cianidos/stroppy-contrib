@@ -89,7 +89,7 @@ jobs:
 
   publish:
     needs: [resolve, build]
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'stroppy-io/stroppy-contrib'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'Cianidos/stroppy-contrib'
     runs-on: ubuntu-24.04
     permissions:
       contents: write

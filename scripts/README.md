@@ -43,7 +43,8 @@ cache/download resolution for pg-noop.
 Pull requests run the complete build/validation matrix but have read-only
 permissions and never publish. Main pushes, manual main runs, and a weekly main
 schedule can update the rolling collection; the schedule picks up stable v6 SDK
-updates. Workflows from forks cannot publish to upstream.
+updates. This fork explicitly authorizes publication only to
+`Cianidos/stroppy-contrib`; its token never publishes to upstream.
 
 Only the publish job receives `contents: write`. Before touching `latest`, it
 checks all four archives/checksums and requires identical contrib commit, exact
@@ -55,7 +56,7 @@ atomic multi-file transaction: users downloading during publication can see a
 checksum mismatch and should retry. No release is deleted to publish an update.
 
 Publication is serialized rather than canceling an in-flight asset upload.
-A completed run whose commit is no longer upstream main skips publication, so
+A completed run whose commit is no longer this repository's main skips publication, so
 queued old work cannot roll back a newer collection.
 
 ## Local native build
